@@ -12,13 +12,10 @@ RUN ./gradlew installDist --no-daemon
 # ── Stage 2: Minimal Runtime for Hugging Face Spaces ──
 FROM eclipse-temurin:17-jre-jammy
 
-# Install utilities and cloudflared (for optional Cloudflare compatibility)
+# Install ca-certificates and curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
-    && curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb \
-    && dpkg -i /tmp/cloudflared.deb \
-    && rm -f /tmp/cloudflared.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # Hugging Face Spaces runs as user 1000

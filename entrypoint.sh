@@ -21,7 +21,7 @@ if [ -n "$REPO_URLS" ]; then
     echo "✅ Loaded REPO_URLS into $HOME/.cncverse/repos.txt"
 fi
 
-# 3. Optional Cloudflare Worker sync (backward compatibility)
+# 3. Optional Cloudflare Worker sync (if configured)
 if [ -n "$CF_WORKER_URL" ]; then
     echo "Cloudflare Worker URL detected: $CF_WORKER_URL"
     CF_SECRET="${CF_WORKER_SECRET:-cncverse_secret_2026}"
@@ -33,20 +33,6 @@ if [ -n "$CF_WORKER_URL" ]; then
             -H "Authorization: Bearer $CF_SECRET" \
             -H "Content-Type: application/json" \
             -d "{\"backend_url\": \"$HF_DIRECT_URL\"}" || true
-    elif command -v cloudflared >/dev/null 2>&1; then
-        echo "Launching Cloudflare tunnel..."
-        cloudflared tunnel --url "http://127.0.0.1:${PORT:-7860}" --no-autoupdate > /tmp/tunnel.log 2>&1 &
-        (
-            sleep 5
-            TUNNEL_URL=$(grep -Eo 'https://[-a-zA-Z0-9.]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)
-            if [ -n "$TUNNEL_URL" ]; then
-                echo "Syncing Cloudflare tunnel ($TUNNEL_URL) with Cloudflare Worker..."
-                curl -s -X POST "$CF_WORKER_URL/__update_backend" \
-                    -H "Authorization: Bearer $CF_SECRET" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"backend_url\": \"$TUNNEL_URL\"}" || true
-            fi
-        ) &
     fi
 fi
 
