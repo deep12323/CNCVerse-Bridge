@@ -1,0 +1,7 @@
+.git
+.gradle
+.kotlin
+build/
+**/build/
+.github/
+*.log

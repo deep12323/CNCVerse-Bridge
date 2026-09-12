@@ -1,8 +1,17 @@
+---
+title: CNCVerse Bridge
+emoji: 🎬
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # 🎬 CNCVerse Bridge
 
 [![Join us on Telegram](https://img.shields.io/badge/Telegram-Join%20Group-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/cncverse)
-[![Cloudflare Worker](https://img.shields.io/badge/Cloudflare-Worker%20Gateway-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
-[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-24%2F7%20Hosting-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)](https://github.com/features/actions)
+[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-yellow?style=for-the-badge)](https://huggingface.co/spaces)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Project-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/nivincnc)
 
 An application addon bridge that runs **Cloudstream extensions directly on Stremio, Nuvio, and all Stremio-supported platforms**.
@@ -11,7 +20,7 @@ An application addon bridge that runs **Cloudstream extensions directly on Strem
 
 ## 🌟 Key Features
 
-- **🌐 24/7 Free Cloud Hosting:** Run for free on GitHub Actions + Cloudflare Workers with a permanent `*.workers.dev` URL.
+- **🌐 24/7 Free Cloud Hosting:** Run for free on **Hugging Face Spaces** with a direct, permanent `*.hf.space` HTTPS URL (no tunnels or banned runner cron jobs).
 - **⚡ All-Platform Stremio Support:** Works seamlessly on Android TV, Google TV, FireStick, Android, iOS / iPadOS (Stremio Web), Windows, macOS, and Linux.
 - **🔄 Always-On Auto Updates:** Extensions automatically update in the background whenever repository updates are released.
 - **💾 Full Extension & Data Persistence:** Automatically caches and recovers all your installed `.cs3` plugins and settings across runner restarts.
@@ -19,84 +28,57 @@ An application addon bridge that runs **Cloudstream extensions directly on Strem
 
 ---
 
-## 🚀 24/7 Free Cloud Deployment (Permanent `workers.dev` URL)
+## 🤗 24/7 Free Cloud Deployment via Hugging Face Spaces (Direct URL)
 
-Host your own private, permanent CNCVerse Bridge in the cloud for **100% free** using GitHub Actions and Cloudflare Workers. Your Stremio addon URL will remain permanent and never change!
+Host your own private CNCVerse Bridge on Hugging Face Spaces with a permanent, direct HTTPS URL — **no Cloudflare tunnel required**!
 
 ```mermaid
 flowchart LR
-    Stremio["📺 Stremio Client\n(TV / Phone / Web)"] -->|"Permanent URL\n(https://your-worker.workers.dev)"| CF["⚡ Cloudflare Worker\n(Permanent Gateway)"]
-    CF -->|"Tunnel Sync"| GHA["🤖 GitHub Actions Runner\n(24/7 CNCVerse Bridge)"]
-    GHA -->|"Streams & Metadata"| CF
+    Stremio["📺 Stremio Client\n(TV / Phone / Web)"] -->|"Direct HTTPS URL\n(https://your-user-space.hf.space/manifest.json)"| HF["🤗 Hugging Face Spaces\n(CNCVerse Bridge Container)"]
+    HF -->|"Streams & Metadata"| Stremio
 ```
 
----
+### Step 1: Create a Space on Hugging Face
+1. Log into [Hugging Face](https://huggingface.co/) (create a free account if you don't have one).
+2. Click **New Space** (or visit [huggingface.co/new-space](https://huggingface.co/new-space)).
+3. Space Settings:
+   - **Space name:** e.g. `cncverse-bridge`
+   - **License / Visibility:** Choose **Public** so Stremio can reach it without authentication tokens.
+   - **Select the Space SDK:** Choose **Docker** → **Blank**.
+   - **Space hardware:** Free (CPU basic · 2 vCPU · 16 GB RAM).
+4. Click **Create Space**.
 
-### Step 1: Deploy the Cloudflare Worker Gateway
+### Step 2: Push Repository to Hugging Face
+Clone your new Space repository and push this codebase (or connect your GitHub repo to the Space):
+```bash
+git remote add space https://huggingface.co/spaces/<your-username>/<space-name>
+git push --force space main
+```
+*Hugging Face Spaces will automatically detect the `Dockerfile`, build it, and launch CNCVerse Bridge.*
 
-1. Log into your [Cloudflare Dashboard](https://dash.cloudflare.com/).
-2. Go to **Workers & Pages** → click **Create Application** → **Create Worker**.
-   * Give it a name (e.g. `cncverse-bridge`).
-   * Click **Deploy**.
-3. Create a **KV Namespace**:
-   * On the left sidebar under **Workers & Pages**, click **KV**.
-   * Click **Create a Namespace** → Name it **`CNC_BRIDGE_KV`** → click **Add**.
-4. Configure Worker Settings:
-   * Go back to **Workers & Pages** → click on your `cncverse-bridge` worker → **Settings**.
-   * Go to **Bindings** (or **Variables and Secrets**):
-     * Under **KV Namespace Bindings**, click **Add binding**:
-       * Variable name: `CNC_BRIDGE_KV`
-       * KV namespace: select `CNC_BRIDGE_KV`
-     * Under **Environment Variables**, click **Add variable**:
-       * Variable name: `CF_WORKER_SECRET`
-       * Value: Any secret password of your choice (e.g. `my_secure_secret_123`)
-5. **Paste the 1-Line Gateway Code:**
-   * Open your Worker page → Tap **Edit code** → Replace everything with this 1-line snippet and tap **Deploy**:
-   ```javascript
-   export default{async fetch(request,env){const url=new URL(request.url);if(url.pathname==="/__update_backend"&&request.method==="POST"){const auth=(request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");const secret=env.CF_WORKER_SECRET||"cncverse_secret_2026";if(auth!==secret)return new Response("Unauthorized",{status:401});const data=await request.json();await env.CNC_BRIDGE_KV.put("BACKEND",data.backend_url);return new Response(JSON.stringify({status:"ok"}),{headers:{"content-type":"application/json"}});}const backend=await env.CNC_BRIDGE_KV.get("BACKEND");if(!backend)return new Response("CNCVerse Bridge starting up. Please wait 30 seconds.",{status:503});const target=new URL(url.pathname+url.search,backend);const headers=new Headers(request.headers);headers.set("X-Forwarded-Host",url.host);headers.set("X-Forwarded-Proto","https");return fetch(target.toString(),{method:request.method,headers:headers,body:request.body,redirect:"follow"});}};
-   ```
-6. **Copy your Worker URL** (e.g. `https://cncverse-bridge.<your-subdomain>.workers.dev`).
-
----
-
-### Step 2: Fork & Add GitHub Secrets
-
-1. **Fork** this repository to your own GitHub account.
-2. In your forked repository, go to **Settings** → **Secrets and variables** → **Actions**.
-3. Click **New repository secret** and add the following:
-
-| Secret Name | Required | Description / Example |
-| :--- | :---: | :--- |
-| `CF_WORKER_URL` | **Yes** | Your Cloudflare Worker URL, e.g. `https://cncverse-bridge.<your-subdomain>.workers.dev` |
-| `CF_WORKER_SECRET` | **Yes** | The exact secret password you set in Cloudflare (e.g. `my_secure_secret_123`) |
-| `AUTO_INSTALL_EXTENSIONS` | *Optional* | Optional comma-separated list of extensions to install (e.g. `SuperStream,Sorastream,SFlix`). Leave empty to only keep and auto-update your installed plugins. |
-| `EXTENSION_SETTINGS` | *Optional* | Content of your `ext_settings.txt` (FebBox tokens, ShowBox tokens, scraper settings) |
-| `INSTALLED_PLUGINS` | *Optional* | Content of `installed_plugins.json` (to restore specific installed extensions across runners) |
-| `REPO_URLS` | *Optional* | Additional repository URLs (one per line) |
-
----
-
-### Step 3: Start the 24/7 Runner
-
-1. Go to the **Actions** tab in your forked repository.
-2. Under All workflows, click **Deploy CNCVerse Bridge 24/7**.
-3. Click **Run workflow** → **Run workflow**.
-4. The workflow will automatically launch, restore/cache your extensions, start the server, and sync its live tunnel with your Cloudflare Worker.
-
-> [!TIP]
-> The workflow automatically triggers every 5 hours via GitHub Actions schedule to keep your bridge running 24/7 without interruption.
-
----
+### Step 3: Configure Extensions & Settings (Optional)
+In your Space page, navigate to **Settings** → **Variables and Secrets**:
+- `AUTO_INSTALL_EXTENSIONS`: *(Optional)* Comma-separated list of extensions to auto-install on startup (e.g. `SuperStream,Sorastream,SFlix` or `all`).
+- `EXTENSION_SETTINGS`: *(Optional)* Paste the contents of your `ext_settings.txt` (FebBox / ShowBox tokens, concurrency).
+- `CF_WORKER_URL` & `CF_WORKER_SECRET`: *(Optional)* If you also want to route through an existing Cloudflare Worker.
 
 ### Step 4: Add to Stremio
+Your direct permanent Stremio Addon URL is:
+```text
+https://<your-username>-<space-name>.hf.space/manifest.json
+```
+1. Open **Stremio** on any device.
+2. Go to **Addons** → Paste your URL into the search/URL bar.
+3. Click **Install**. Enjoy streaming! 🍿
 
-1. Open **Stremio** on any device (Android TV, Mobile, Desktop, Web, FireStick, iOS/iPadOS).
-2. Navigate to the **Addons** section.
-3. In the search bar / Addon URL field, paste your permanent Cloudflare Worker URL:
+### 💡 Keeping your Hugging Face Space Active 24/7 (Optional)
+Free Hugging Face Spaces can pause after 48 hours of inactivity. To keep your Space permanently active 24/7:
+1. Create a free account on [UptimeRobot](https://uptimerobot.com/) or [cron-job.org](https://cron-job.org/).
+2. Add a new HTTP monitor pointing to your Space URL:
    ```text
-   https://cncverse-bridge.<your-subdomain>.workers.dev/manifest.json
+   https://<your-username>-<space-name>.hf.space/manifest.json
    ```
-4. Click **Install**. You're all set! 🍿
+3. Set the check interval to **15 minutes**. Your space will stay awake permanently!
 
 ---
 
