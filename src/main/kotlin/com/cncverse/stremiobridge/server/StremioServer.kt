@@ -487,12 +487,34 @@ object StremioServer {
     private suspend fun buildManifest(): StremioManifest {
         val activeApis = loadedApis.filter { !disabledPlugins.contains(it.internalName) }
         val types = listOf("movie", "series", "tv", "other")
+        val settings = loadExtensionSettings()
+        val catalogPlacement = settings["CatalogPlacement"]?.trim()?.lowercase() ?: "other"
 
-        val catalogs = activeApis.flatMap { api ->
-            api.supportedTypes
+        suspend fun buildOtherCatalog(api: MainApiWrapper): StremioCatalogDef {
+            val extra = mutableListOf<ExtraEntry>()
+            val sections = api.getMainPageSections().toMutableList()
+            if (sections.isEmpty() && api.supportedTypes.size > 1) {
+                sections.addAll(api.supportedTypes.map { it.replaceFirstChar { c -> c.uppercase() } })
+            }
+            if (sections.isNotEmpty() && (sections.size > 1 || sections.first().isNotBlank())) {
+                extra.add(ExtraEntry(name = "genre", options = sections.distinct()))
+            }
+            extra.add(ExtraEntry("search"))
+            extra.add(ExtraEntry("skip"))
+
+            return StremioCatalogDef(
+                type = "other",
+                id   = "cnc_${api.internalName}_other",
+                name = api.name,
+                extra = extra
+            )
+        }
+
+        suspend fun buildTypedCatalogs(api: MainApiWrapper): List<StremioCatalogDef> {
+            return api.supportedTypes
                 .map { cs3TvTypeToStremio(it) }
                 .distinct()
-                .flatMap { stremioType ->
+                .map { stremioType ->
                     val extra = mutableListOf<ExtraEntry>()
                     val sections = api.getMainPageSections()
                     if (sections.isNotEmpty() && (sections.size > 1 || sections.first().isNotBlank())) {
@@ -509,21 +531,40 @@ object StremioServer {
                     }
                     val catName = if (api.supportedTypes.size > 1) "${api.name} ($typeLabel)" else api.name
 
-                    listOf(
-                        StremioCatalogDef(
-                            type = stremioType,
-                            id   = "cnc_${api.internalName}_$stremioType",
-                            name = catName,
-                            extra = extra
-                        )
+                    StremioCatalogDef(
+                        type = stremioType,
+                        id   = "cnc_${api.internalName}_$stremioType",
+                        name = catName,
+                        extra = extra
                     )
                 }
-        }.distinctBy { it.id }
-            .ifEmpty {
-                listOf(StremioCatalogDef("movie", "cnc_all_movie", "CNCVerse (Movie)"))
-            }
+        }
 
-        val manifestVersion = "1.${activeApis.size}.${kotlin.math.abs(activeApis.sumOf { it.internalName.hashCode() }) % 1000}"
+        val catalogs = when (catalogPlacement) {
+            "movie", "movies", "categorized" -> {
+                activeApis.flatMap { buildTypedCatalogs(it) }
+                    .distinctBy { it.id }
+                    .ifEmpty {
+                        listOf(StremioCatalogDef("movie", "cnc_all_movie", "CNCVerse (Movie)"))
+                    }
+            }
+            "both" -> {
+                (activeApis.map { buildOtherCatalog(it) } + activeApis.flatMap { buildTypedCatalogs(it) })
+                    .distinctBy { it.id }
+                    .ifEmpty {
+                        listOf(StremioCatalogDef("other", "cnc_all_other", "CNCVerse (Others)"))
+                    }
+            }
+            else -> { // "other", "others", or default
+                activeApis.map { buildOtherCatalog(it) }
+                    .distinctBy { it.id }
+                    .ifEmpty {
+                        listOf(StremioCatalogDef("other", "cnc_all_other", "CNCVerse (Others)"))
+                    }
+            }
+        }
+
+        val manifestVersion = "2.${activeApis.size}.${kotlin.math.abs((activeApis.sumOf { it.internalName.hashCode() } + catalogPlacement.hashCode())) % 1000}"
 
         return StremioManifest(
             id          = "com.cncverse.stremiobridge",
@@ -557,8 +598,9 @@ object StremioServer {
         return try {
             if (!search.isNullOrBlank()) {
                 val results = api.search(search)
-                // If plugin supports multiple types, filter strictly; otherwise return all
-                val filtered = if (api.supportedTypes.size > 1) {
+                val filtered = if (type == "other") {
+                    results
+                } else if (api.supportedTypes.size > 1) {
                     results.filter { r ->
                         val rType = cs3TvTypeToStremio(r.type)
                         rType == type || (type == "movie" && rType == "other")
@@ -567,8 +609,9 @@ object StremioServer {
                 filtered.map { it.toStremiMeta(api.internalName, type) }
             } else {
                 val results = api.getMainPage(page = (skip / 20) + 1, type = type, sectionName = sectionName)
-                // If plugin supports multiple types, filter strictly; otherwise return all
-                val filtered = if (api.supportedTypes.size > 1) {
+                val filtered = if (type == "other") {
+                    results
+                } else if (api.supportedTypes.size > 1) {
                     results.filter { r ->
                         val rType = cs3TvTypeToStremio(r.type)
                         rType == type || (type == "movie" && rType == "other")
@@ -776,6 +819,7 @@ object StremioServer {
         val tmdbEnabled = settings["ProviderTmdb"] != "false"
         val cineStreamEnabled = settings["ProviderCineStream"] != "false"
         val simklEnabled = settings["ProviderSimkl"] != "false"
+        val catalogPlacement = settings["CatalogPlacement"]?.trim()?.lowercase() ?: "other"
 
         val available = RepoState.availablePlugins.value
         val installed = RepoState.installedPlugins.value
@@ -1133,6 +1177,16 @@ object StremioServer {
             </div>
           </div>
 
+          <div class="form-group">
+            <label for="CatalogPlacement">Stremio Catalog Placement</label>
+            <div class="desc">Choose which category displays extension catalogs in Stremio's Discover page.</div>
+            <select class="form-control" id="CatalogPlacement" name="CatalogPlacement">
+              <option value="other" ${if (catalogPlacement == "other" || catalogPlacement.isBlank()) "selected" else ""}>Others (Recommended - keeps Movies & Series clean)</option>
+              <option value="movie" ${if (catalogPlacement == "movie") "selected" else ""}>Movies & Series (Categorized by extension type)</option>
+              <option value="both" ${if (catalogPlacement == "both") "selected" else ""}>Both (Show in Others and Movies/Series)</option>
+            </select>
+          </div>
+
           <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem; padding: 0.75rem;">💾 Save Extension Settings</button>
         </form>
       </div>
@@ -1313,7 +1367,7 @@ data class MediaInfo(
 fun SearchResult.toStremiMeta(pluginInternalName: String, stremioType: String): StremioMeta {
     val encodedId = StremioIds.encode(pluginInternalName, url)
     val resolvedType = cs3TvTypeToStremio(type)
-    val finalType = if (resolvedType == "other" || resolvedType.isBlank()) stremioType else resolvedType
+    val finalType = if (stremioType == "other" || resolvedType == "other" || resolvedType.isBlank()) stremioType else resolvedType
     return StremioMeta(
         id          = encodedId,
         type        = finalType,
@@ -1331,7 +1385,7 @@ fun SearchResult.toStremiMeta(pluginInternalName: String, stremioType: String): 
 }
 
 fun MediaInfo.toStremiMeta(pluginInternalName: String, stremioType: String): StremioMeta {
-    val resolvedType = cs3TvTypeToStremio(type).let { if (it == "other" || it.isBlank()) stremioType else it }
+    val resolvedType = if (stremioType == "other") "other" else cs3TvTypeToStremio(type).let { if (it == "other" || it.isBlank()) stremioType else it }
     return StremioMeta(
         id          = StremioIds.encode(pluginInternalName, dataUrl),
         type        = resolvedType,
