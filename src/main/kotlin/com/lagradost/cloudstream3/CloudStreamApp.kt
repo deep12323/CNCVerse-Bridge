@@ -18,6 +18,7 @@ class CloudStreamApp {
          * desktop gear dialog can render it.
          */
         @PublishedApi
+        @Synchronized
         internal fun getSettings(): MutableMap<String, String> {
             if (inMemorySettings == null) {
                 inMemorySettings = SettingsHookMap().also { map ->
@@ -25,6 +26,17 @@ class CloudStreamApp {
                 }
             }
             return inMemorySettings!!
+        }
+
+        @Synchronized
+        fun syncSettings(newSettings: Map<String, String>) {
+            val map = inMemorySettings
+            if (map == null) {
+                inMemorySettings = SettingsHookMap().also { it.putAll(newSettings) }
+            } else {
+                map.clear()
+                map.putAll(newSettings)
+            }
         }
 
         private class SettingsHookMap : LinkedHashMap<String, String>() {
@@ -73,6 +85,7 @@ class CloudStreamApp {
             }
         }
 
+        @Synchronized
         fun setKey(path: String, value: Any?) {
             registerSchemaKey(path, value)
             val settings = getSettings()
@@ -81,7 +94,13 @@ class CloudStreamApp {
             } else {
                 settings[path] = value.toString()
             }
-            saveExtensionSettings(settings)
+            try {
+                val f = com.cncverse.stremiobridge.repo.extSettingsFile
+                f.parentFile?.mkdirs()
+                f.writeText(settings.map { "${it.key.trim()}=${it.value.trim()}" }.joinToString("\n"))
+            } catch (e: Exception) {
+                // Ignore write failures in read-only sandbox
+            }
         }
 
         fun getContext(): Context? {

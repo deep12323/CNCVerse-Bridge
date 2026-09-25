@@ -140,7 +140,7 @@ object RepoManager {
         val installed = RepoState.installedPlugins.value
         wrapped.forEach { ap ->
             val inst = installed.find { it.internalName == ap.plugin.internalName }
-            if (inst != null) {
+            if (inst != null && (inst.repoUrl.isBlank() || inst.repoUrl == ap.repoEntry.url)) {
                 val hasNewVersion = ap.plugin.version > inst.version ||
                         (ap.plugin.fileHash != null && inst.fileHash != null && ap.plugin.fileHash != inst.fileHash)
                 if (hasNewVersion) {

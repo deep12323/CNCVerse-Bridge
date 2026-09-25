@@ -60,10 +60,11 @@ git push --force space main
 ### Step 3: Configure Environment Variables (Optional)
 In your Space page, navigate to **Settings** → **Variables and secrets**:
 
-| Variable Name | Example Value | Description |
+| Variable / Secret | Example Value | Description |
 |---|---|---|
+| `GITHUB_TOKEN` *(Secret, Recommended)* | `ghp_...` | GitHub Personal Access Token (with `repo` scope). **Enables 100% automated 24/7 cloud sync** — saves all installed extensions, settings, and repos to your `bridge-data` branch and restores them on boot! |
 | `AUTO_INSTALL_EXTENSIONS` | `all` or `SuperStream,Sorastream` | Comma-separated list of extensions to automatically install on container boot (`all` installs all repo plugins). |
-| `EXTENSION_SETTINGS` | *(contents of ext_settings.txt)* | Paste provider tokens (FebBox / ShowBox UI tokens) and scraper concurrency. |
+| `EXTENSION_SETTINGS` | *(contents of ext_settings.txt)* | Provider tokens (FebBox / ShowBox tokens) and scraper concurrency (copyable with 1 click from Dashboard). |
 | `REPO_URLS` | `https://raw.githubusercontent.com/...` | Custom Cloudstream repository URLs to load extensions from. |
 | `PORT` | `7860` | Server listening port (defaults to `7860` on Hugging Face). |
 

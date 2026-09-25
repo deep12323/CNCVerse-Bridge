@@ -14,7 +14,7 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 
 private val PORT = System.getenv("PORT")?.toIntOrNull() ?: 7860
-private val CACHE_DIR = File(System.getProperty("user.home"), ".cncverse_bridge").absolutePath
+private val CACHE_DIR = com.cncverse.stremiobridge.repo.bridgeCacheDir.absolutePath
 
 fun main() {
     runBlocking {
@@ -51,6 +51,34 @@ private suspend fun startBridge(appScope: CoroutineScope) {
     appScope.launch(Dispatchers.IO) {
         runCatching {
             RepoManager.refreshAllRepos()
+
+            // 1. Recover any installed plugins whose .cs3 files are missing on disk (e.g. after container restart / rebuild)
+            val installedNow = RepoState.installedPlugins.value
+            val currentFiles = PluginInstaller.getInstalledFiles(CACHE_DIR)
+            val missingFromDisk = installedNow.filter { !currentFiles.containsKey(it.internalName) }
+            if (missingFromDisk.isNotEmpty()) {
+                ServerState.info("Detected ${missingFromDisk.size} installed extension(s) missing from disk. Re-downloading…")
+                var recoveredCount = 0
+                missingFromDisk.forEach { inst ->
+                    val ap = RepoState.availablePlugins.value.find { 
+                        it.plugin.internalName.equals(inst.internalName, ignoreCase = true) 
+                    }
+                    if (ap != null) {
+                        ServerState.info("Re-downloading missing extension '${inst.displayName}'…")
+                        val ok = PluginInstaller.installPlugin(ap, CACHE_DIR)
+                        if (ok) recoveredCount++
+                    } else {
+                        ServerState.warn("Could not find repository entry for missing extension '${inst.displayName}'")
+                    }
+                }
+                if (recoveredCount > 0) {
+                    val updatedInstalled = PluginInstaller.loadInstalledPlugins(CACHE_DIR)
+                    val updatedCs3Files = PluginInstaller.getInstalledFiles(CACHE_DIR)
+                    GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+                }
+            }
+
+            // 2. Auto-update installed plugins with updates available
             val toUpdate = RepoState.installedPlugins.value.filter {
                 RepoState.getInstallState(it.internalName) is PluginInstallState.UpdateAvailable
             }
@@ -62,6 +90,7 @@ private suspend fun startBridge(appScope: CoroutineScope) {
                 GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
             }
 
+            // 3. Auto-install plugins specified in AUTO_INSTALL_EXTENSIONS
             val autoInstallRaw = System.getenv("AUTO_INSTALL_EXTENSIONS")
             if (!autoInstallRaw.isNullOrBlank()) {
                 val targets = autoInstallRaw.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }

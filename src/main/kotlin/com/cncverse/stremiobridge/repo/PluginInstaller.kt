@@ -133,16 +133,21 @@ object PluginInstaller {
         val sanitized = internalName.replace(Regex("[^A-Za-z0-9._-]"), "_").lowercase()
         val dir = File(cacheDir, "plugins")
         if (dir.exists()) {
-            dir.listFiles { f -> f.nameWithoutExtension.lowercase() == sanitized || f.name.lowercase().contains(sanitized) }
-                ?.forEach { runCatching { it.delete() } }
+            dir.listFiles { f ->
+                val base = f.nameWithoutExtension.lowercase()
+                base == sanitized || base == internalName.lowercase()
+            }?.forEach { runCatching { it.delete() } }
         }
-        val inst = RepoState.installedPlugins.value.find { it.internalName == internalName }
+        val inst = RepoState.installedPlugins.value.find { it.internalName.equals(internalName, ignoreCase = true) }
         if (inst != null) {
             runCatching { File(inst.localPath).delete() }
         }
         val jarsDir = File(cacheDir, "jars")
         if (jarsDir.exists()) {
-            jarsDir.listFiles { f -> f.name.lowercase().contains(sanitized) }?.forEach { runCatching { it.delete() } }
+            jarsDir.listFiles { f ->
+                val base = f.nameWithoutExtension.lowercase().removeSuffix("-jvm4")
+                base == sanitized || base == internalName.lowercase()
+            }?.forEach { runCatching { it.delete() } }
         }
         RepoState.markUninstalled(internalName)
         saveInstalledPlugins(cacheDir)

@@ -317,6 +317,15 @@ object StremioServer {
             post("/api/settings") {
                 val params = call.receiveParameters()
                 val current = loadExtensionSettings().toMutableMap()
+
+                // Explicitly handle unchecked checkboxes so they can be toggled off
+                val booleanKeys = listOf("ProviderTmdb", "ProviderCineStream", "ProviderSimkl")
+                booleanKeys.forEach { bKey ->
+                    if (params[bKey] == null) {
+                        current[bKey] = "false"
+                    }
+                }
+
                 params.entries().forEach { (k, v) ->
                     val valStr = v.firstOrNull()?.trim()
                     if (valStr.isNullOrEmpty()) {
@@ -328,6 +337,72 @@ object StremioServer {
                 saveExtensionSettings(current)
                 ServerState.info("Extension settings updated via Web Dashboard")
                 call.respondRedirect("/?saved=1#settings")
+            }
+
+            get("/api/backup") {
+                val settings = loadExtensionSettings()
+                val repos = com.cncverse.stremiobridge.repo.loadRepoUrls()
+                val installed = RepoState.installedPlugins.value
+                val backupObj = kotlinx.serialization.json.buildJsonObject {
+                    put("settings", kotlinx.serialization.json.buildJsonObject {
+                        settings.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
+                    })
+                    put("repos", kotlinx.serialization.json.buildJsonArray {
+                        repos.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                    })
+                    put("installed", kotlinx.serialization.json.buildJsonArray {
+                        installed.forEach { add(kotlinx.serialization.json.JsonPrimitive(it.internalName)) }
+                    })
+                }
+                call.response.headers.append(
+                    HttpHeaders.ContentDisposition,
+                    "attachment; filename=\"cncverse_backup_${System.currentTimeMillis()}.json\""
+                )
+                call.respondText(backupObj.toString(), ContentType.Application.Json)
+            }
+
+            post("/api/restore") {
+                val params = call.receiveParameters()
+                val jsonStr = params["backup_json"]?.trim()
+                if (!jsonStr.isNullOrBlank()) {
+                    try {
+                        val parsed = serverJson.parseToJsonElement(jsonStr).jsonObject
+                        parsed["settings"]?.jsonObject?.let { sObj ->
+                            val sMap = sObj.mapValues { it.value.jsonPrimitive.content }
+                            saveExtensionSettings(sMap)
+                        }
+                        parsed["repos"]?.let { rArray ->
+                            val rList = (rArray as? kotlinx.serialization.json.JsonArray)?.map { it.jsonPrimitive.content } ?: emptyList()
+                            if (rList.isNotEmpty()) {
+                                com.cncverse.stremiobridge.repo.saveRepoUrls(rList)
+                                RepoManager.loadSavedRepos()
+                            }
+                        }
+                        parsed["installed"]?.let { iArray ->
+                            val iList = (iArray as? kotlinx.serialization.json.JsonArray)?.map { it.jsonPrimitive.content.lowercase() } ?: emptyList()
+                            if (iList.isNotEmpty()) {
+                                val cDir = currentCacheDir ?: com.cncverse.stremiobridge.repo.bridgeCacheDir.absolutePath
+                                withContext(Dispatchers.IO) {
+                                    RepoManager.refreshAllRepos()
+                                    val available = RepoState.availablePlugins.value
+                                    iList.forEach { target ->
+                                        val ap = available.find { it.plugin.internalName.lowercase() == target }
+                                        if (ap != null) {
+                                            PluginInstaller.installPlugin(ap, cDir)
+                                        }
+                                    }
+                                    val updatedInstalled = PluginInstaller.loadInstalledPlugins(cDir)
+                                    val updatedCs3Files = PluginInstaller.getInstalledFiles(cDir)
+                                    GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+                                }
+                            }
+                        }
+                        ServerState.info("Configuration successfully restored from backup!")
+                    } catch (e: Exception) {
+                        ServerState.error("Failed to restore backup: ${e.message}")
+                    }
+                }
+                call.respondRedirect("/?restored=1#settings")
             }
 
             // 📺 Manifest 📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺─────────────────────────────────────────────────────
@@ -706,6 +781,9 @@ object StremioServer {
         val installed = RepoState.installedPlugins.value
         val repos = RepoState.repos.value
 
+        val installedAutoList = if (installed.isNotEmpty()) installed.joinToString(",") { it.internalName } else "all"
+        val repoUrlsComma = repos.map { it.url }.filter { it.isNotBlank() }.joinToString(",")
+
         val repoChipsHtml = repos.joinToString("") { r ->
             val displayName = if (r.name.isNotBlank()) r.name else r.url.removePrefix("https://").removePrefix("http://").take(28)
             val isDefault = r.url == DEFAULT_REPO_URL
@@ -1057,6 +1135,57 @@ object StremioServer {
 
           <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem; padding: 0.75rem;">💾 Save Extension Settings</button>
         </form>
+      </div>
+
+      <div class="card" style="margin-top: 1.5rem;">
+        <h3 style="margin-bottom: 0.75rem; font-size: 1.15rem; font-weight: 700;">💾 Backup & Cloud Persistence</h3>
+        <p style="color: var(--text-sub); font-size: 0.88rem; margin-bottom: 1.25rem;">
+          Prevent installed extensions, added repositories, and settings from resetting when your server or Hugging Face Space restarts.
+        </p>
+
+        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem;">
+          <a href="/api/backup" class="btn btn-secondary" style="padding: 0.6rem 1.2rem; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem;">
+            ⬇️ Download Backup (JSON)
+          </a>
+        </div>
+
+        <form action="/api/restore" method="POST" style="margin-bottom: 1.5rem; background: var(--bg-item); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">
+          <label style="font-weight: 600; font-size: 0.9rem; display: block; margin-bottom: 0.4rem;">Restore from Backup JSON</label>
+          <div class="desc" style="margin-bottom: 0.6rem;">Paste the contents of your backup JSON file below:</div>
+          <textarea name="backup_json" class="form-control" rows="3" placeholder="Paste backup JSON here..." style="font-family: monospace; font-size: 0.8rem; margin-bottom: 0.75rem;" required></textarea>
+          <button type="submit" class="btn btn-sm btn-primary" onclick="performAction(this, 'Restoring…')">⬆️ Restore Backup</button>
+        </form>
+
+        <div style="background: var(--bg-item); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">
+          <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 0.5rem;">🤗 Hugging Face Spaces 24/7 Persistence</h4>
+          <p style="color: var(--text-sub); font-size: 0.83rem; line-height: 1.5; margin-bottom: 0.75rem;">
+            Hugging Face Spaces run on ephemeral containers that reset on restart or sleep. To make your settings and extensions permanent, configure these in your Space: <b>Settings → Variables and secrets</b>:
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                <span style="font-size: 0.82rem; font-weight: 600;">Variable: <code>AUTO_INSTALL_EXTENSIONS</code></span>
+                <button type="button" class="btn-sm btn-outline-secondary" onclick="navigator.clipboard.writeText('$installedAutoList'); alert('Copied AUTO_INSTALL_EXTENSIONS!');">Copy Value</button>
+              </div>
+              <input type="text" class="form-control" readonly value="$installedAutoList" style="font-size: 0.8rem; font-family: monospace; background: var(--bg-card);">
+            </div>
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                <span style="font-size: 0.82rem; font-weight: 600;">Variable: <code>REPO_URLS</code></span>
+                <button type="button" class="btn-sm btn-outline-secondary" onclick="navigator.clipboard.writeText('$repoUrlsComma'); alert('Copied REPO_URLS!');">Copy Value</button>
+              </div>
+              <input type="text" class="form-control" readonly value="$repoUrlsComma" style="font-size: 0.8rem; font-family: monospace; background: var(--bg-card);">
+            </div>
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                <span style="font-size: 0.82rem; font-weight: 600;">Secret: <code>GITHUB_TOKEN</code> (Recommended for Full Auto-Sync)</span>
+              </div>
+              <div class="desc" style="font-size: 0.8rem;">
+                Add a GitHub Personal Access Token (repo scope) as secret <code>GITHUB_TOKEN</code> in your Space. CNCVerse Bridge will automatically sync all extensions, settings, and repos to your <code>bridge-data</code> git branch every 45s and restore them on boot!
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
